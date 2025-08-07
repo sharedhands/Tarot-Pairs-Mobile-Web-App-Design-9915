@@ -15,6 +15,7 @@ import Register from './pages/Register';
 import Admin from './pages/Admin';
 import AdminDashboard from './pages/AdminDashboard';
 import UserManagement from './pages/UserManagement';
+import ContentManagement from './pages/ContentManagement';
 import './App.css';
 
 function App() {
@@ -36,6 +37,7 @@ function App() {
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/admin/dashboard" element={<AdminDashboard />} />
                 <Route path="/admin/users" element={<UserManagement />} />
+                <Route path="/admin/content" element={<ContentManagement />} />
               </Routes>
             </Layout>
           </Router>

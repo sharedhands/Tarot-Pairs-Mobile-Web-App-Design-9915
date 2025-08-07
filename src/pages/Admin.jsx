@@ -319,10 +319,13 @@ const Admin = () => {
             </h3>
             <div className="space-y-3">
               <RoleGuard permission={PERMISSIONS.MANAGE_CONTENT}>
-                <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
+                <Link
+                  to="/admin/content"
+                  className="block w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left"
+                >
                   <SafeIcon icon={FiUpload} className="w-4 h-4 inline mr-2" />
                   Upload Pair Meanings Database
-                </button>
+                </Link>
                 <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
                   <SafeIcon icon={FiDatabase} className="w-4 h-4 inline mr-2" />
                   Manage Curated Pairs
@@ -336,18 +339,20 @@ const Admin = () => {
 
           {/* Upload Placeholder */}
           <RoleGuard permission={PERMISSIONS.MANAGE_CONTENT}>
-            <div className="mystical-card rounded-xl p-6 border-2 border-dashed border-mystical-400/30">
-              <div className="text-center">
-                <SafeIcon icon={FiUpload} className="w-12 h-12 mx-auto mb-3 text-mystical-400" />
-                <h4 className="text-white font-semibold mb-2">Upload Content</h4>
-                <p className="text-mystical-200 text-sm mb-4">
-                  Drag and drop your CSV files here or click to browse
-                </p>
-                <button className="mystical-button px-6 py-2 rounded-lg">
-                  Select Files
-                </button>
+            <Link to="/admin/content" className="block">
+              <div className="mystical-card rounded-xl p-6 border-2 border-dashed border-mystical-400/30 hover:border-mystical-400/50 transition-colors">
+                <div className="text-center">
+                  <SafeIcon icon={FiUpload} className="w-12 h-12 mx-auto mb-3 text-mystical-400" />
+                  <h4 className="text-white font-semibold mb-2">Upload Content</h4>
+                  <p className="text-mystical-200 text-sm mb-4">
+                    Upload and manage your tarot pair database
+                  </p>
+                  <span className="mystical-button px-6 py-2 rounded-lg inline-block">
+                    Manage Content
+                  </span>
+                </div>
               </div>
-            </div>
+            </Link>
           </RoleGuard>
         </motion.div>
       )}

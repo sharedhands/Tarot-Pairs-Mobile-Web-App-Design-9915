@@ -102,6 +102,13 @@ const AdminDashboard = () => {
       user: 'sarah.jones@example.com',
       time: '2 hours ago',
       type: 'activity'
+    },
+    {
+      id: 5,
+      action: 'Content database updated',
+      user: 'admin@tarotpairs.com',
+      time: '3 hours ago',
+      type: 'content'
     }
   ];
 
@@ -245,7 +252,8 @@ const AdminDashboard = () => {
                     activity.type === 'user' ? 'bg-blue-400' :
                     activity.type === 'premium' ? 'bg-yellow-400' :
                     activity.type === 'report' ? 'bg-red-400' :
-                    'bg-green-400'
+                    activity.type === 'content' ? 'bg-green-400' :
+                    'bg-purple-400'
                   }`}></div>
                   <div>
                     <div className="text-white text-sm">{activity.action}</div>
