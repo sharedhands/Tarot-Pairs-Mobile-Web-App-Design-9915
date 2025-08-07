@@ -25,14 +25,28 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     // Mock login - replace with actual authentication
-    const mockUser = {
+    let mockUser = {
       id: 1,
       email,
       name: email.split('@')[0],
       isPremium: false,
       joinDate: new Date().toISOString(),
     };
-    
+
+    // Assign roles based on email for demo purposes
+    if (email === 'admin@tarotpairs.com') {
+      mockUser.role = 'admin';
+      mockUser.isPremium = true;
+    } else if (email === 'moderator@tarotpairs.com') {
+      mockUser.role = 'moderator';
+      mockUser.isPremium = true;
+    } else if (email === 'demo@tarotpairs.com') {
+      mockUser.isPremium = true;
+      mockUser.role = 'premium';
+    } else {
+      mockUser.role = 'user';
+    }
+
     setUser(mockUser);
     localStorage.setItem('tarotUser', JSON.stringify(mockUser));
     return mockUser;
@@ -45,9 +59,10 @@ export const AuthProvider = ({ children }) => {
       email,
       name,
       isPremium: false,
+      role: 'user',
       joinDate: new Date().toISOString(),
     };
-    
+
     setUser(mockUser);
     localStorage.setItem('tarotUser', JSON.stringify(mockUser));
     return mockUser;
@@ -60,7 +75,11 @@ export const AuthProvider = ({ children }) => {
 
   const upgradeToPremium = () => {
     if (user) {
-      const updatedUser = { ...user, isPremium: true };
+      const updatedUser = { 
+        ...user, 
+        isPremium: true,
+        role: user.role === 'user' ? 'premium' : user.role
+      };
       setUser(updatedUser);
       localStorage.setItem('tarotUser', JSON.stringify(updatedUser));
     }

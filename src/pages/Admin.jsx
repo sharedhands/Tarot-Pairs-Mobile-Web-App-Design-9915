@@ -3,14 +3,20 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { useUser } from '../context/UserContext';
+import { useRole, PERMISSIONS } from '../context/RoleContext';
+import RoleGuard from '../components/RoleGuard';
 import SafeIcon from '../common/SafeIcon';
 import * as FiIcons from 'react-icons/fi';
 
-const { FiSettings, FiUser, FiHeart, FiDatabase, FiUpload, FiLogOut, FiShield } = FiIcons;
+const { 
+  FiSettings, FiUser, FiHeart, FiDatabase, FiUpload, FiLogOut, 
+  FiShield, FiUsers, FiBarChart3, FiCrown 
+} = FiIcons;
 
 const Admin = () => {
   const { user, logout } = useAuth();
   const { favorites, dailyDrawHistory } = useUser();
+  const { userRole, canAccessAdminPanel, hasPermission } = useRole();
   const [activeTab, setActiveTab] = useState('profile');
 
   if (!user) {
@@ -40,8 +46,17 @@ const Admin = () => {
   const tabs = [
     { id: 'profile', label: 'Profile', icon: FiUser },
     { id: 'content', label: 'Content', icon: FiDatabase },
-    { id: 'settings', label: 'Settings', icon: FiSettings },
+    { id: 'settings', label: 'Settings', icon: FiSettings }
   ];
+
+  // Add admin-specific tabs based on permissions
+  if (canAccessAdminPanel()) {
+    tabs.splice(1, 0, { id: 'dashboard', label: 'Dashboard', icon: FiBarChart3 });
+    
+    if (hasPermission(PERMISSIONS.MANAGE_USERS)) {
+      tabs.splice(2, 0, { id: 'users', label: 'Users', icon: FiUsers });
+    }
+  }
 
   return (
     <div className="max-w-md mx-auto px-4 py-6 space-y-6">
@@ -51,27 +66,65 @@ const Admin = () => {
         animate={{ opacity: 1, y: 0 }}
         className="text-center"
       >
-        <h1 className="text-2xl font-mystical font-bold text-white mb-2">
-          Admin Panel
-        </h1>
+        <div className="flex items-center justify-center space-x-2 mb-2">
+          <SafeIcon icon={FiShield} className="w-6 h-6 text-mystical-300" />
+          <h1 className="text-2xl font-mystical font-bold text-white">
+            Admin Panel
+          </h1>
+        </div>
         <p className="text-mystical-200">
           Manage your account and content
         </p>
+        <div className="mt-2">
+          <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+            userRole === 'admin' ? 'bg-red-500/20 text-red-300' :
+            userRole === 'moderator' ? 'bg-purple-500/20 text-purple-300' :
+            userRole === 'premium' ? 'bg-yellow-500/20 text-yellow-300' :
+            'bg-mystical-500/20 text-mystical-300'
+          }`}>
+            <SafeIcon 
+              icon={userRole === 'admin' ? FiShield : userRole === 'premium' ? FiCrown : FiUser} 
+              className="w-3 h-3 mr-1" 
+            />
+            {userRole.charAt(0).toUpperCase() + userRole.slice(1)} User
+          </span>
+        </div>
       </motion.div>
+
+      {/* Quick Admin Access */}
+      <RoleGuard permission={PERMISSIONS.ACCESS_ANALYTICS}>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="mystical-card rounded-xl p-4"
+        >
+          <h3 className="text-white font-semibold mb-3 flex items-center">
+            <SafeIcon icon={FiBarChart3} className="w-5 h-5 mr-2 text-mystical-300" />
+            Admin Dashboard
+          </h3>
+          <Link
+            to="/admin/dashboard"
+            className="block w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-center"
+          >
+            Access Full Admin Dashboard
+          </Link>
+        </motion.div>
+      </RoleGuard>
 
       {/* Tab Navigation */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
+        transition={{ delay: 0.2 }}
         className="mystical-card rounded-xl p-2"
       >
-        <div className="flex space-x-1">
+        <div className="flex space-x-1 overflow-x-auto">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 py-2 px-3 rounded-lg transition-all ${
+              className={`flex-1 py-2 px-3 rounded-lg transition-all whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'bg-mystical-500 text-white'
                   : 'text-mystical-200 hover:text-white hover:bg-mystical-600/30'
@@ -97,7 +150,6 @@ const Admin = () => {
               <SafeIcon icon={FiUser} className="w-5 h-5 mr-2 text-mystical-300" />
               User Information
             </h3>
-            
             <div className="space-y-3">
               <div className="flex justify-between">
                 <span className="text-mystical-200">Name:</span>
@@ -106,6 +158,17 @@ const Admin = () => {
               <div className="flex justify-between">
                 <span className="text-mystical-200">Email:</span>
                 <span className="text-white">{user.email}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-mystical-200">Role:</span>
+                <span className={
+                  userRole === 'admin' ? 'text-red-400' :
+                  userRole === 'moderator' ? 'text-purple-400' :
+                  userRole === 'premium' ? 'text-yellow-400' :
+                  'text-mystical-300'
+                }>
+                  {userRole.charAt(0).toUpperCase() + userRole.slice(1)}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-mystical-200">Status:</span>
@@ -125,7 +188,6 @@ const Admin = () => {
           {/* Stats */}
           <div className="mystical-card rounded-xl p-6">
             <h3 className="text-white font-semibold mb-4">Your Activity</h3>
-            
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center">
                 <div className="text-2xl font-bold text-mystical-300 mb-1">
@@ -145,7 +207,6 @@ const Admin = () => {
           {/* Quick Actions */}
           <div className="mystical-card rounded-xl p-6">
             <h3 className="text-white font-semibold mb-4">Quick Actions</h3>
-            
             <div className="space-y-3">
               <Link
                 to="/favorites"
@@ -154,7 +215,6 @@ const Admin = () => {
                 <SafeIcon icon={FiHeart} className="w-4 h-4 inline mr-2" />
                 View Favorites
               </Link>
-              
               {!user.isPremium && (
                 <Link
                   to="/upgrade"
@@ -166,6 +226,82 @@ const Admin = () => {
             </div>
           </div>
         </motion.div>
+      )}
+
+      {/* Dashboard Tab */}
+      {activeTab === 'dashboard' && (
+        <RoleGuard permission={PERMISSIONS.ACCESS_ANALYTICS}>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-4"
+          >
+            <div className="mystical-card rounded-xl p-6">
+              <h3 className="text-white font-semibold mb-4 flex items-center">
+                <SafeIcon icon={FiBarChart3} className="w-5 h-5 mr-2 text-mystical-300" />
+                Admin Overview
+              </h3>
+              <div className="space-y-3">
+                <Link
+                  to="/admin/dashboard"
+                  className="block w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors"
+                >
+                  📊 Full Dashboard
+                </Link>
+                <RoleGuard permission={PERMISSIONS.MANAGE_USERS}>
+                  <Link
+                    to="/admin/users"
+                    className="block w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors"
+                  >
+                    <SafeIcon icon={FiUsers} className="w-4 h-4 inline mr-2" />
+                    Manage Users
+                  </Link>
+                </RoleGuard>
+                <RoleGuard permission={PERMISSIONS.MANAGE_CONTENT}>
+                  <Link
+                    to="/admin/content"
+                    className="block w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors"
+                  >
+                    <SafeIcon icon={FiDatabase} className="w-4 h-4 inline mr-2" />
+                    Manage Content
+                  </Link>
+                </RoleGuard>
+              </div>
+            </div>
+          </motion.div>
+        </RoleGuard>
+      )}
+
+      {/* Users Tab */}
+      {activeTab === 'users' && (
+        <RoleGuard permission={PERMISSIONS.MANAGE_USERS}>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-4"
+          >
+            <div className="mystical-card rounded-xl p-6">
+              <h3 className="text-white font-semibold mb-4 flex items-center">
+                <SafeIcon icon={FiUsers} className="w-5 h-5 mr-2 text-mystical-300" />
+                User Management
+              </h3>
+              <div className="space-y-3">
+                <Link
+                  to="/admin/users"
+                  className="block w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors"
+                >
+                  👥 Manage All Users
+                </Link>
+                <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
+                  📧 Send Notifications
+                </button>
+                <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
+                  📊 User Analytics
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </RoleGuard>
       )}
 
       {/* Content Tab */}
@@ -181,18 +317,17 @@ const Admin = () => {
               <SafeIcon icon={FiDatabase} className="w-5 h-5 mr-2 text-mystical-300" />
               Content Management
             </h3>
-            
             <div className="space-y-3">
-              <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
-                <SafeIcon icon={FiUpload} className="w-4 h-4 inline mr-2" />
-                Upload Pair Meanings Database
-              </button>
-              
-              <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
-                <SafeIcon icon={FiDatabase} className="w-4 h-4 inline mr-2" />
-                Manage Curated Pairs
-              </button>
-              
+              <RoleGuard permission={PERMISSIONS.MANAGE_CONTENT}>
+                <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
+                  <SafeIcon icon={FiUpload} className="w-4 h-4 inline mr-2" />
+                  Upload Pair Meanings Database
+                </button>
+                <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
+                  <SafeIcon icon={FiDatabase} className="w-4 h-4 inline mr-2" />
+                  Manage Curated Pairs
+                </button>
+              </RoleGuard>
               <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
                 ⚙️ Configure AI Integration
               </button>
@@ -200,18 +335,20 @@ const Admin = () => {
           </div>
 
           {/* Upload Placeholder */}
-          <div className="mystical-card rounded-xl p-6 border-2 border-dashed border-mystical-400/30">
-            <div className="text-center">
-              <SafeIcon icon={FiUpload} className="w-12 h-12 mx-auto mb-3 text-mystical-400" />
-              <h4 className="text-white font-semibold mb-2">Upload Content</h4>
-              <p className="text-mystical-200 text-sm mb-4">
-                Drag and drop your CSV files here or click to browse
-              </p>
-              <button className="mystical-button px-6 py-2 rounded-lg">
-                Select Files
-              </button>
+          <RoleGuard permission={PERMISSIONS.MANAGE_CONTENT}>
+            <div className="mystical-card rounded-xl p-6 border-2 border-dashed border-mystical-400/30">
+              <div className="text-center">
+                <SafeIcon icon={FiUpload} className="w-12 h-12 mx-auto mb-3 text-mystical-400" />
+                <h4 className="text-white font-semibold mb-2">Upload Content</h4>
+                <p className="text-mystical-200 text-sm mb-4">
+                  Drag and drop your CSV files here or click to browse
+                </p>
+                <button className="mystical-button px-6 py-2 rounded-lg">
+                  Select Files
+                </button>
+              </div>
             </div>
-          </div>
+          </RoleGuard>
         </motion.div>
       )}
 
@@ -228,7 +365,6 @@ const Admin = () => {
               <SafeIcon icon={FiSettings} className="w-5 h-5 mr-2 text-mystical-300" />
               Application Settings
             </h3>
-            
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-mystical-200">Daily Draw Notifications</span>
@@ -236,14 +372,12 @@ const Admin = () => {
                   <div className="w-5 h-5 bg-white rounded-full absolute top-0.5 left-0.5"></div>
                 </button>
               </div>
-              
               <div className="flex items-center justify-between">
                 <span className="text-mystical-200">Email Updates</span>
                 <button className="w-12 h-6 bg-mystical-600 rounded-full relative">
                   <div className="w-5 h-5 bg-white rounded-full absolute top-0.5 right-0.5"></div>
                 </button>
               </div>
-              
               <div className="flex items-center justify-between">
                 <span className="text-mystical-200">Dark Mode</span>
                 <button className="w-12 h-6 bg-mystical-500 rounded-full relative">
@@ -256,16 +390,13 @@ const Admin = () => {
           {/* Account Actions */}
           <div className="mystical-card rounded-xl p-6">
             <h3 className="text-white font-semibold mb-4">Account Actions</h3>
-            
             <div className="space-y-3">
               <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
                 🔒 Change Password
               </button>
-              
               <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
                 📧 Update Email
               </button>
-              
               <button className="w-full p-3 bg-mystical-600/20 rounded-lg text-mystical-200 hover:bg-mystical-600/30 transition-colors text-left">
                 📱 Export Data
               </button>
