@@ -2,13 +2,15 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
+import { usePairData } from '../context/PairDataContext';
 import SafeIcon from '../common/SafeIcon';
 import * as FiIcons from 'react-icons/fi';
 
-const { FiSearch, FiZap, FiHeart, FiGift, FiStar, FiTrendingUp } = FiIcons;
+const { FiSearch, FiZap, FiHeart, FiGift, FiStar, FiTrendingUp, FiDatabase } = FiIcons;
 
 const Home = () => {
   const { user } = useAuth();
+  const { pairData, dataSource, isLoading } = usePairData();
 
   const features = [
     {
@@ -55,9 +57,16 @@ const Home = () => {
           Welcome to Tarot Pairs
         </h1>
         <p className="text-mystical-200 leading-relaxed">
-          Unlock the deeper meanings hidden within tarot card combinations. 
-          Explore thousands of interpretations and discover new insights.
+          Unlock the deeper meanings hidden within tarot card combinations. Explore thousands of interpretations and discover new insights.
         </p>
+        
+        {dataSource === 'sample' && !isLoading && (
+          <div className="mt-2">
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-300">
+              Using sample data. Upload your own in Admin panel.
+            </span>
+          </div>
+        )}
       </motion.div>
 
       {/* Quick Stats */}
@@ -69,7 +78,7 @@ const Home = () => {
       >
         <div className="grid grid-cols-3 gap-4 text-center">
           <div>
-            <div className="text-2xl font-bold text-mystical-300">3,003</div>
+            <div className="text-2xl font-bold text-mystical-300">{isLoading ? '...' : pairData.length}</div>
             <div className="text-sm text-mystical-200">Card Pairs</div>
           </div>
           <div>
@@ -77,7 +86,9 @@ const Home = () => {
             <div className="text-sm text-mystical-200">Tarot Cards</div>
           </div>
           <div>
-            <div className="text-2xl font-bold text-mystical-300">100</div>
+            <div className="text-2xl font-bold text-mystical-300">
+              {isLoading ? '...' : pairData.filter(p => p.specialInterpretation).length}
+            </div>
             <div className="text-sm text-mystical-200">Curated Pairs</div>
           </div>
         </div>
@@ -109,6 +120,32 @@ const Home = () => {
         ))}
       </div>
 
+      {/* Admin Access for Content Management */}
+      {user && (user.role === 'admin' || user.role === 'moderator') && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+        >
+          <Link
+            to="/admin/content"
+            className="block mystical-card rounded-xl p-4 hover:scale-105 transition-transform"
+          >
+            <div className="flex items-center space-x-3">
+              <div className="w-12 h-12 rounded-lg bg-green-500/20 flex items-center justify-center">
+                <SafeIcon icon={FiDatabase} className="w-6 h-6 text-green-300" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold">Manage Content</h3>
+                <p className="text-mystical-200 text-sm">
+                  Upload or create tarot pair interpretations
+                </p>
+              </div>
+            </div>
+          </Link>
+        </motion.div>
+      )}
+
       {/* Premium CTA */}
       {user && !user.isPremium && (
         <motion.div
@@ -120,12 +157,9 @@ const Home = () => {
           <SafeIcon icon={FiStar} className="w-12 h-12 mx-auto mb-4 text-yellow-400" />
           <h3 className="text-white font-semibold mb-2">Unlock Premium Features</h3>
           <p className="text-mystical-200 text-sm mb-4">
-            Access all 3,003 interpretations, AI insights, and exclusive content
+            Access all interpretations, AI insights, and exclusive content
           </p>
-          <Link
-            to="/upgrade"
-            className="mystical-button px-6 py-3 rounded-lg inline-block"
-          >
+          <Link to="/upgrade" className="mystical-button px-6 py-3 rounded-lg inline-block">
             Upgrade Now
           </Link>
         </motion.div>
@@ -144,10 +178,7 @@ const Home = () => {
             Create an account to save favorites and unlock premium features
           </p>
           <div className="space-x-3">
-            <Link
-              to="/register"
-              className="mystical-button px-4 py-2 rounded-lg inline-block"
-            >
+            <Link to="/register" className="mystical-button px-4 py-2 rounded-lg inline-block">
               Sign Up
             </Link>
             <Link

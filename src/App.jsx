@@ -3,6 +3,7 @@ import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { UserProvider } from './context/UserContext';
 import { RoleProvider } from './context/RoleContext';
+import { PairDataProvider } from './context/PairDataContext';
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import ExplorePairs from './pages/ExplorePairs';
@@ -23,24 +24,26 @@ function App() {
     <AuthProvider>
       <RoleProvider>
         <UserProvider>
-          <Router>
-            <Layout>
-              <Routes>
-                <Route path="/" element={<Home />} />
-                <Route path="/explore" element={<ExplorePairs />} />
-                <Route path="/daily-draw" element={<DailyDraw />} />
-                <Route path="/favorites" element={<Favorites />} />
-                <Route path="/curated" element={<CuratedPairs />} />
-                <Route path="/upgrade" element={<Upgrade />} />
-                <Route path="/login" element={<Login />} />
-                <Route path="/register" element={<Register />} />
-                <Route path="/admin" element={<Admin />} />
-                <Route path="/admin/dashboard" element={<AdminDashboard />} />
-                <Route path="/admin/users" element={<UserManagement />} />
-                <Route path="/admin/content" element={<ContentManagement />} />
-              </Routes>
-            </Layout>
-          </Router>
+          <PairDataProvider>
+            <Router>
+              <Layout>
+                <Routes>
+                  <Route path="/" element={<Home />} />
+                  <Route path="/explore" element={<ExplorePairs />} />
+                  <Route path="/daily-draw" element={<DailyDraw />} />
+                  <Route path="/favorites" element={<Favorites />} />
+                  <Route path="/curated" element={<CuratedPairs />} />
+                  <Route path="/upgrade" element={<Upgrade />} />
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/register" element={<Register />} />
+                  <Route path="/admin" element={<Admin />} />
+                  <Route path="/admin/dashboard" element={<AdminDashboard />} />
+                  <Route path="/admin/users" element={<UserManagement />} />
+                  <Route path="/admin/content" element={<ContentManagement />} />
+                </Routes>
+              </Layout>
+            </Router>
+          </PairDataProvider>
         </UserProvider>
       </RoleProvider>
     </AuthProvider>

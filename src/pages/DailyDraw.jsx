@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useUser } from '../context/UserContext';
-import { tarotCards } from '../data/tarotCards';
-import { generatePairMeaning } from '../data/pairMeanings';
+import { usePairData } from '../context/PairDataContext';
 import PairResult from '../components/PairResult';
 import SafeIcon from '../common/SafeIcon';
 import * as FiIcons from 'react-icons/fi';
 import { format } from 'date-fns';
 
-const { FiRefreshCw, FiCalendar, FiClock } = FiIcons;
+const { FiRefreshCw, FiCalendar, FiClock, FiAlertCircle } = FiIcons;
 
 const DailyDraw = () => {
   const { addToDailyDrawHistory, dailyDrawHistory } = useUser();
+  const { isLoading, getRandomDailyDraw, pairData, dataSource } = usePairData();
+  
   const [todaysDraw, setTodaysDraw] = useState(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [showAIPlaceholder, setShowAIPlaceholder] = useState(false);
@@ -20,8 +21,8 @@ const DailyDraw = () => {
 
   useEffect(() => {
     // Check if there's already a draw for today
-    const existingDraw = dailyDrawHistory.find(draw => 
-      format(new Date(draw.date), 'yyyy-MM-dd') === today
+    const existingDraw = dailyDrawHistory.find(
+      draw => format(new Date(draw.date), 'yyyy-MM-dd') === today
     );
     
     if (existingDraw) {
@@ -34,23 +35,18 @@ const DailyDraw = () => {
     
     // Simulate card drawing animation
     setTimeout(() => {
-      const availableCards = [...tarotCards];
-      const drawnCards = [];
+      const draw = getRandomDailyDraw();
       
-      // Draw two random cards
-      for (let i = 0; i < 2; i++) {
-        const randomIndex = Math.floor(Math.random() * availableCards.length);
-        drawnCards.push(availableCards.splice(randomIndex, 1)[0]);
+      if (draw) {
+        const drawWithDate = {
+          ...draw,
+          date: new Date().toISOString(),
+        };
+        
+        setTodaysDraw(drawWithDate);
+        addToDailyDrawHistory(drawWithDate);
       }
       
-      const pairMeaning = generatePairMeaning(drawnCards[0], drawnCards[1]);
-      const draw = {
-        ...pairMeaning,
-        date: new Date().toISOString(),
-      };
-      
-      setTodaysDraw(draw);
-      addToDailyDrawHistory(draw);
       setIsDrawing(false);
     }, 2000);
   };
@@ -58,6 +54,35 @@ const DailyDraw = () => {
   const handleAskAI = () => {
     setShowAIPlaceholder(true);
   };
+
+  if (isLoading) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-6 flex justify-center items-center">
+        <div className="text-white">Loading tarot pairs data...</div>
+      </div>
+    );
+  }
+
+  if (pairData.length === 0) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-6">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mystical-card rounded-xl p-8 text-center"
+        >
+          <SafeIcon icon={FiAlertCircle} className="w-16 h-16 mx-auto mb-4 text-yellow-400" />
+          <h2 className="text-white font-semibold mb-2">No Tarot Pair Data Found</h2>
+          <p className="text-mystical-200 mb-6">
+            Please upload a CSV file in the Admin panel to populate the tarot pairs database.
+          </p>
+          <a href="#/admin/content" className="mystical-button px-6 py-3 rounded-lg inline-block">
+            Go to Content Management
+          </a>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-md mx-auto px-4 py-6 space-y-6">
@@ -73,6 +98,13 @@ const DailyDraw = () => {
         <p className="text-mystical-200">
           Discover your guidance for {format(new Date(), 'MMMM do, yyyy')}
         </p>
+        {dataSource === 'sample' && (
+          <div className="mt-2">
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-300">
+              Using sample data. Upload your own in Admin panel.
+            </span>
+          </div>
+        )}
       </motion.div>
 
       {/* Today's Draw Section */}
@@ -125,6 +157,16 @@ const DailyDraw = () => {
           animate={{ opacity: 1, y: 0 }}
         >
           <PairResult pairData={todaysDraw} onAskAI={handleAskAI} />
+          
+          {todaysDraw.generatedOnTheFly && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="mt-3 p-3 bg-blue-500/20 rounded-lg text-blue-300 text-sm text-center"
+            >
+              This interpretation was generated on-the-fly. Upload more pairs in the Admin panel for curated meanings.
+            </motion.div>
+          )}
         </motion.div>
       )}
 
@@ -181,8 +223,7 @@ const DailyDraw = () => {
           </h3>
           <div className="bg-mystical-600/20 rounded-lg p-4 border border-mystical-400/30">
             <p className="text-mystical-200 text-center italic">
-              Personalized AI guidance for your daily draw will appear here. 
-              This feature will provide deeper insights tailored to your current situation.
+              Personalized AI guidance for your daily draw will appear here. This feature will provide deeper insights tailored to your current situation.
             </p>
           </div>
           <button

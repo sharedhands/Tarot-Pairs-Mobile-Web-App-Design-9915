@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useRole, PERMISSIONS } from '../context/RoleContext';
+import { usePairData } from '../context/PairDataContext';
 import ProtectedRoute from '../components/ProtectedRoute';
 import { tarotCards } from '../data/tarotCards';
-import { samplePairs, curatedPairs } from '../data/pairMeanings';
 import SafeIcon from '../common/SafeIcon';
 import * as FiIcons from 'react-icons/fi';
+import { parseCSV, objectsToCSV, downloadCSV } from '../lib/csvUtils';
 
 const { 
   FiDatabase, FiUpload, FiDownload, FiSearch, FiEdit, 
@@ -14,7 +15,9 @@ const {
 
 const ContentManagement = () => {
   const { hasPermission } = useRole();
-  const [pairData, setPairData] = useState([...samplePairs]);
+  const { pairData: contextPairData, updatePairData, dataSource } = usePairData();
+  
+  const [pairData, setPairData] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('all');
   const [uploadStatus, setUploadStatus] = useState(null);
@@ -33,6 +36,11 @@ const ContentManagement = () => {
   });
   const [keywordInput, setKeywordInput] = useState('');
 
+  // Initialize with data from context
+  useEffect(() => {
+    setPairData(contextPairData);
+  }, [contextPairData]);
+
   // Handle file upload
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -44,12 +52,13 @@ const ContentManagement = () => {
     reader.onload = (e) => {
       try {
         const text = e.target.result;
-        const rows = text.split('\n');
-        const headers = rows[0].split(',');
+        const parsedData = parseCSV(text);
         
         // Validate headers
         const requiredHeaders = ['card1Id', 'card2Id', 'meaning'];
-        const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
+        const missingHeaders = requiredHeaders.filter(h => 
+          !parsedData.headers || !parsedData.headers.includes(h)
+        );
         
         if (missingHeaders.length > 0) {
           setUploadStatus({
@@ -61,21 +70,16 @@ const ContentManagement = () => {
 
         // Process data
         const newPairs = [];
-        for (let i = 1; i < rows.length; i++) {
-          if (!rows[i].trim()) continue;
+        for (const row of parsedData.data) {
+          if (!row.card1Id || !row.card2Id || !row.meaning) {
+            continue;
+          }
           
-          const values = rows[i].split(',');
-          const rowData = {};
-          
-          headers.forEach((header, index) => {
-            rowData[header] = values[index]?.trim();
-          });
-          
-          const card1 = tarotCards.find(c => c.id === parseInt(rowData.card1Id));
-          const card2 = tarotCards.find(c => c.id === parseInt(rowData.card2Id));
+          const card1 = tarotCards.find(c => c.id === parseInt(row.card1Id));
+          const card2 = tarotCards.find(c => c.id === parseInt(row.card2Id));
           
           if (!card1 || !card2) {
-            console.warn(`Skipping row ${i+1}: Invalid card ID`);
+            console.warn(`Skipping row with invalid card ID: ${row.card1Id}, ${row.card2Id}`);
             continue;
           }
           
@@ -83,17 +87,20 @@ const ContentManagement = () => {
             id: `${card1.id}-${card2.id}`,
             card1,
             card2,
-            meaning: rowData.meaning,
-            keywords: rowData.keywords ? rowData.keywords.split(';') : [],
-            theme: rowData.theme || 'General',
-            isPremium: rowData.isPremium === 'true',
-            specialInterpretation: rowData.specialInterpretation || ''
+            meaning: row.meaning || '',
+            keywords: row.keywords ? row.keywords.split(';').map(k => k.trim()) : [],
+            theme: row.theme || 'General',
+            isPremium: row.isPremium === 'true',
+            specialInterpretation: row.specialInterpretation || ''
           };
           
           newPairs.push(newPair);
         }
         
+        // Update local state and context
         setPairData(newPairs);
+        updatePairData(newPairs);
+        
         setUploadStatus({
           type: 'success',
           message: `Successfully imported ${newPairs.length} pairs`
@@ -124,32 +131,25 @@ const ContentManagement = () => {
 
   // Handle file download
   const handleDownload = () => {
-    // Create CSV content
-    const headers = ['card1Id', 'card1Name', 'card2Id', 'card2Name', 'meaning', 'keywords', 'theme', 'isPremium', 'specialInterpretation'];
-    const csvContent = [
-      headers.join(','),
-      ...pairData.map(pair => [
-        pair.card1.id,
-        `"${pair.card1.name.replace(/"/g, '""')}"`,
-        pair.card2.id,
-        `"${pair.card2.name.replace(/"/g, '""')}"`,
-        `"${pair.meaning.replace(/"/g, '""')}"`,
-        `"${(pair.keywords || []).join(';').replace(/"/g, '""')}"`,
-        `"${(pair.theme || '').replace(/"/g, '""')}"`,
-        pair.isPremium,
-        `"${(pair.specialInterpretation || '').replace(/"/g, '""')}"`
-      ].join(','))
-    ].join('\n');
+    const headers = [
+      'card1Id', 'card1Name', 'card2Id', 'card2Name', 'meaning', 
+      'keywords', 'theme', 'isPremium', 'specialInterpretation'
+    ];
     
-    // Create and trigger download
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'tarot_pair_meanings.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const data = pairData.map(pair => ({
+      card1Id: pair.card1.id,
+      card1Name: pair.card1.name,
+      card2Id: pair.card2.id,
+      card2Name: pair.card2.name,
+      meaning: pair.meaning,
+      keywords: (pair.keywords || []).join(';'),
+      theme: pair.theme || '',
+      isPremium: pair.isPremium ? 'true' : 'false',
+      specialInterpretation: pair.specialInterpretation || ''
+    }));
+    
+    const csvContent = objectsToCSV(data, headers);
+    downloadCSV(csvContent, 'tarot_pair_meanings.csv');
   };
 
   // Filter pairs based on search and filter
@@ -172,7 +172,9 @@ const ContentManagement = () => {
   // Handle pair deletion
   const handleDeletePair = (pairId) => {
     if (window.confirm('Are you sure you want to delete this pair?')) {
-      setPairData(prev => prev.filter(p => p.id !== pairId));
+      const newPairs = pairData.filter(p => p.id !== pairId);
+      setPairData(newPairs);
+      updatePairData(newPairs);
     }
   };
 
@@ -230,16 +232,17 @@ const ContentManagement = () => {
       specialInterpretation: editForm.specialInterpretation
     };
 
+    let newPairs;
     if (isEditing) {
       // Update existing pair
-      setPairData(prev => 
-        prev.map(p => p.id === editForm.id ? newPair : p)
-      );
+      newPairs = pairData.map(p => p.id === editForm.id ? newPair : p);
     } else {
       // Add new pair
-      setPairData(prev => [...prev, newPair]);
+      newPairs = [...pairData, newPair];
     }
-
+    
+    setPairData(newPairs);
+    updatePairData(newPairs);
     setIsEditing(false);
     setIsAdding(false);
     setSelectedPair(null);
@@ -362,6 +365,15 @@ const ContentManagement = () => {
             <p className="text-mystical-200">
               Manage tarot pair interpretations and curated content
             </p>
+            <div className="mt-2">
+              <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                dataSource === 'uploaded' 
+                  ? 'bg-green-500/20 text-green-300' 
+                  : 'bg-yellow-500/20 text-yellow-300'
+              }`}>
+                {dataSource === 'uploaded' ? 'Using Uploaded Data' : 'Using Sample Data'}
+              </span>
+            </div>
           </div>
           <div className="text-right">
             <div className="text-2xl font-bold text-mystical-300">{pairData.length}</div>
@@ -708,6 +720,7 @@ const ContentManagement = () => {
                     type="text"
                     value={keywordInput}
                     onChange={(e) => setKeywordInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddKeyword())}
                     placeholder="Add a keyword..."
                     className="flex-1 px-4 py-2 bg-white/10 border border-white/30 rounded-l-lg text-white placeholder-white/60 focus:outline-none focus:border-mystical-300"
                   />
