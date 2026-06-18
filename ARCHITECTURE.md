@@ -3,23 +3,141 @@
 ## Status
 
 This document defines the target Phase 1 architecture for migrating Tarot Pairs
-from a browser-local prototype to a Supabase-backed SaaS application.
+from a browser-local React/Vite prototype to a Supabase-backed private-beta SaaS
+application.
 
-Phase 1 establishes the data, authentication, authorization, and application
-service foundations. It does not add billing, AI-generated interpretations, or
-new product features.
+Phase 1 is architectural foundation work. It establishes database shape,
+authentication, authorization, data-access boundaries, and migration order. It
+does not implement Stripe, OpenAI, mobile apps, or new frontend product
+features.
+
+## Deployment Architecture
+
+Tarot Pairs will be deployed into an existing Supabase project that already
+contains the working Social Intuition Test (SIT) application. SIT must not be
+modified, migrated, or refactored as part of Tarot Pairs work.
+
+Tarot Pairs uses a dedicated PostgreSQL schema:
+
+```sql
+create schema if not exists tarot_pairs;
+```
+
+Rules for this shared-project deployment:
+
+- Do not place Tarot Pairs tables in `public`.
+- Do not rename, move, or alter SIT tables.
+- Do not assume ownership of the `public` schema.
+- Fully qualify Tarot-owned tables, foreign keys, indexes, functions, triggers,
+  policies, and seed data with the `tarot_pairs` schema.
+- Use the existing Supabase Auth system, `auth.users`.
+- Tarot-owned user/profile tables reference `auth.users(id)`.
+- Use Tarot-specific names for functions, triggers, policies, storage buckets,
+  Edge Functions, cron jobs, and background processes.
+- Prefer prefixes such as `tp_`, `tarot_pairs_`, and `tarot-pairs-`.
+- Future apps in the same Supabase project should use their own schemas, for
+  example `heartbeat_directory`, `tradevet`, or other app-specific schemas.
+
+This makes Tarot Pairs removable later with a controlled `drop schema
+tarot_pairs cascade` after confirming no shared objects depend on it.
+
+### Shared Objects
+
+Shared authentication remains in `auth.users`. Optional cross-app structures,
+such as shared global profiles or app memberships, may live outside the Tarot
+schema in a future platform layer. They are not required for private beta.
+
+If a shared membership model is added later, it should be app-scoped, for
+example:
+
+```text
+app_memberships(user_id, app_key, role, status)
+```
+
+Until then, Tarot Pairs keeps app-local `tarot_pairs.profiles` and
+`tarot_pairs.subscription_status` rows.
+
+### Supabase API Exposure
+
+Supabase only exposes selected schemas through the generated REST/PostgREST API.
+If the React app or repositories need direct Supabase client access to
+`tarot_pairs` tables or RPC functions, the Supabase dashboard must expose the
+`tarot_pairs` schema in API settings.
+
+Frontend access should explicitly target the schema, for example:
+
+```js
+supabase.schema('tarot_pairs').from('readings')
+supabase.schema('tarot_pairs').rpc('tp_get_active_pair_by_cards', {
+  card_a_id,
+  card_b_id,
+})
+```
+
+Do not set global assumptions that would route SIT queries through
+`tarot_pairs`. Tarot repositories should own this schema selection.
+
+### Storage And Background Naming
+
+No storage buckets, Edge Functions, cron jobs, or background workers are part of
+this Phase 1 migration. If added later, use app-specific names such as:
+
+- Storage bucket: `tarot-pairs-imports`
+- Edge Function: `tarot-pairs-import-csv`
+- Edge Function: `tarot-pairs-ai-expand`
+- Cron/background job: `tarot_pairs_activate_dataset`
+
+Do not reuse generic names that could collide with SIT or future apps.
+
+## Product Direction
+
+Tarot Pairs is a paid SaaS app and possible future mobile app. The private beta
+should support:
+
+- Accounts
+- Pair-based readings
+- Saved reading history
+- Notes
+- Tags
+- Favorites
+- Daily draws
+- Admin CSV import of tarot pair meanings
+- Payment/subscription stubs for later Stripe or equivalent integration
+- Future premium or credit-based AI expansions
+
+The app is not merely a lookup tool for two-card meanings. It is a complete
+pair-based tarot reading system.
+
+In this system, a traditional spread position is replaced by one tarot pair. A
+normal three-card Past / Present / Future spread becomes a six-card reading:
+
+```text
+Past     = Card A + Card B
+Present  = Card C + Card D
+Future   = Card E + Card F
+```
+
+Each reading may contain multiple positions. Each position contains one tarot
+pair. Each tarot pair consists of two cards and an authoritative stored
+interpretation.
 
 ## Product Principles
 
-- The 3,003 stored tarot pair meanings are the application's core intellectual
-  property and authoritative interpretation source.
+- The 3,003 stored tarot pair meanings are core intellectual property.
+- Stored pair meanings are the authoritative source for pair interpretation.
 - A tarot pair is unordered. Card A plus Card B is the same pair as Card B plus
   Card A.
-- Stored meanings must be versioned, auditable, and recoverable.
-- Premium authorization must be enforced by the backend, not by hidden frontend
-  controls.
-- Future AI-expanded interpretations must be grounded in a stored pair meaning
-  and kept distinct from authoritative editorial content.
+- Pair meanings are imported as datasets so the complete interpretation corpus
+  can be replaced later with an improved version.
+- Existing readings should remain understandable after a dataset replacement.
+- CSV import is sufficient for private beta.
+- Daily draws are random per user per day.
+- Premium authorization must be enforced by the backend, not hidden frontend UI.
+- Future AI-expanded interpretations must be grounded in an authoritative stored
+  pair meaning.
+- AI-expanded interpretations are future premium or credit-based features only.
+- Premium users should eventually be able to ask a question before receiving an
+  expanded AI interpretation.
 - The frontend must never call OpenAI directly or contain provider secrets.
 - React components should not know Supabase query details.
 
@@ -30,9 +148,10 @@ The current application is a frontend-only React 18 single-page application:
 - Vite for development and production builds
 - React Router with `HashRouter`
 - Tailwind CSS and custom CSS
+- Framer Motion and React Icons
 - React Context for authentication, roles, user activity, and pair data
 - Browser `localStorage` for all persistent state
-- Hardcoded sample, curated, user, and analytics data
+- Hardcoded sample data, curated pairs, mock users, and mock analytics
 - CSV parsing and content management in the browser
 
 The current provider hierarchy is:
@@ -47,7 +166,7 @@ AuthProvider
 ```
 
 Supabase is listed as a dependency, but there is currently no Supabase client,
-schema, migration, query, or environment configuration in the repository.
+schema, migration, RLS policy, Edge Function, or query code in the app.
 
 ### Current Runtime Data Sources
 
@@ -61,61 +180,182 @@ schema, migration, query, or environment configuration in the repository.
 | Favorites | `localStorage.favorites_{userId}` |
 | Daily draws | `localStorage.dailyDraw_{userId}` |
 | Users and analytics | Hardcoded page data |
+| Notes | Not implemented |
+| Tags | Not implemented |
+| Multi-position readings | Not implemented |
 
-## Domain Model
+## Current Product Concepts In The Code
 
-### Tarot Card
+### Cards
 
-One of the canonical 78 cards in the deck. A card has a stable numeric ID,
-name, arcana, suit, and display order.
+The full 78-card deck exists in `src/data/tarotCards.js`. Cards have numeric
+IDs, names, arcana, suits, and display helpers.
 
-### Tarot Pair
+### Pairs
 
-One of the 3,003 unique unordered combinations of two distinct tarot cards.
-Pair identity and pair meaning are modeled separately so editorial content can
-be versioned without changing references from favorites or daily draws.
+Pair meanings appear as sample data, curated data, uploaded CSV data, and random
+generated fallback meanings. Current pair IDs are order-sensitive strings such
+as `0-21`, while lookup logic treats reversed order as equivalent.
 
-### Pair Meaning
+### Readings
 
-The authoritative editorial interpretation for a tarot pair. It includes the
-meaning, keywords, theme, optional curated content, publication status, and
-access tier.
+Readings are not currently modeled. The current app has pair lookup and daily
+draws. Phase 1 must introduce readings and reading positions as first-class
+entities.
+
+### Daily Draws
+
+Daily draw currently generates one random pair per user per day and stores it in
+localStorage.
+
+### Favorites
+
+Favorites exist for pair results. The current implementation stores embedded
+pair snapshots and overwrites pair IDs with timestamp IDs, which creates a
+favorite toggle identity bug.
+
+### Notes And Tags
+
+Notes and tags are not present in the current codebase.
+
+### Admin Tools
+
+The content management screen supports browser-local CSV import/export and
+manual add/edit/delete of pair meanings. User management and dashboard screens
+use mock data.
+
+### Premium And Subscriptions
+
+The upgrade screen describes premium access and Stripe, but premium status is
+currently a client-side localStorage mutation. There is no billing integration.
+
+## Target Domain Model
 
 ### Profile
 
-Application-specific data associated one-to-one with a Supabase Auth user.
-Profiles contain display information and operational roles, but not mutable
-client-controlled subscription entitlement.
+Application-specific user profile linked one-to-one with a Supabase Auth user.
+
+### Role
+
+Operational authorization level. Private beta needs at least `user` and
+`admin`. Premium is not a role.
+
+### Subscription Entitlement
+
+Server-controlled commercial entitlement. This starts as a payment stub and can
+later be connected to Stripe or another provider.
+
+### Tarot Card
+
+One of the canonical 78 cards.
+
+### Tarot Pair Dataset
+
+A complete imported interpretation corpus. The initial 3,003 pair meanings are
+imported into a dataset. Later improved meanings are imported into a new dataset
+and activated transactionally.
+
+### Tarot Pair
+
+One pair interpretation within one dataset. A pair is identified by canonical
+low/high card IDs and has one authoritative stored meaning for that dataset.
+
+### Spread Template
+
+A reusable reading layout such as Daily Pair or Past / Present / Future. Each
+template has ordered positions.
+
+### Reading
+
+A saved user reading. A reading has one or more positions and may include a
+question, title, type, and status.
+
+### Reading Position
+
+One position in a reading. Each position contains one tarot pair, meaning two
+cards and an authoritative interpretation snapshot.
+
+### Reading Note
+
+User-authored note attached to a reading or a specific reading position.
+
+### Reading Tag
+
+User-owned label assignable to readings.
 
 ### Favorite
 
-A user-owned reference to an authoritative tarot pair.
+A user-owned saved reference to a pair or reading.
 
 ### Daily Draw
 
-A dated pair selection belonging to a user. It may preserve the meaning version
-or a text snapshot so historical readings do not silently change after an
-editorial update.
+A once-per-user-per-day random draw. For beta, daily draw should be modeled as a
+one-position reading so it uses the same reading infrastructure.
 
-### Subscription
+### AI Expansion Request
 
-A server-controlled record of commercial entitlement. Premium is an
-entitlement, not an application role.
-
-### Content Import
-
-An audited CSV import attempt containing validation results and execution
-status.
+Future premium/credit-based record of a user's request for an AI-expanded
+interpretation, grounded in a stored pair meaning.
 
 ## Supabase Schema
 
 Schema changes must be implemented as version-controlled SQL migrations under
-`supabase/migrations/`.
+`supabase/migrations/`. Tarot-owned database objects live in the
+`tarot_pairs` schema.
 
-The examples below describe the intended columns and constraints. Exact SQL is
-an implementation deliverable.
+The examples below describe intended columns and constraints. Exact SQL is an
+implementation deliverable.
 
-### `tarot_cards`
+### `tarot_pairs.profiles`
+
+```text
+id               uuid primary key references auth.users(id)
+display_name     text nullable
+email            text nullable
+role             tarot_pairs.tp_profile_role not null default 'user'
+account_status   tarot_pairs.tp_account_status not null default 'active'
+timezone         text nullable
+created_at       timestamptz not null
+updated_at       timestamptz not null
+```
+
+Required enums:
+
+```text
+tp_profile_role: user, admin
+tp_account_status: active, suspended, deleted
+```
+
+For private beta, a profile role field is enough. A separate roles table can be
+added later if role management becomes more complex.
+
+### `tarot_pairs.subscription_status`
+
+Payment/subscription stub for later Stripe or equivalent integration.
+
+```text
+user_id                       uuid primary key references tarot_pairs.profiles(id)
+plan                          tarot_pairs.tp_subscription_plan not null default 'free'
+status                        tarot_pairs.tp_subscription_state not null default 'inactive'
+provider                      text nullable
+provider_customer_id          text nullable
+provider_subscription_id      text nullable
+current_period_end            timestamptz nullable
+cancel_at_period_end          boolean not null default false
+credits_balance               integer not null default 0
+updated_at                    timestamptz not null
+```
+
+Required enums:
+
+```text
+tp_subscription_plan: free, premium
+tp_subscription_state: inactive, trialing, active, past_due, canceled
+```
+
+Only trusted backend code or admin operations may mutate this table.
+
+### `tarot_pairs.tarot_cards`
 
 ```text
 id              smallint primary key
@@ -132,172 +372,421 @@ updated_at      timestamptz not null
 Constraints must limit IDs to the canonical deck range and validate known
 arcana and suit values.
 
-### `tarot_pairs`
+### `tarot_pairs.tarot_pair_datasets`
 
 ```text
-id                    uuid primary key
-card_low_id           smallint not null references tarot_cards(id)
-card_high_id          smallint not null references tarot_cards(id)
-access_tier           content_access_tier not null
-publication_status    publication_status not null
-is_curated            boolean not null default false
-curated_title         text nullable
-created_by            uuid nullable references auth.users(id)
-updated_by            uuid nullable references auth.users(id)
-created_at            timestamptz not null
-updated_at            timestamptz not null
+id                 uuid primary key
+name               text not null
+version_label      text not null
+status             tarot_pairs.tp_dataset_status not null default 'draft'
+source_filename    text nullable
+source_hash        text nullable
+row_count          integer not null default 0
+imported_by        uuid nullable references tarot_pairs.profiles(id)
+activated_at       timestamptz nullable
+created_at         timestamptz not null
+updated_at         timestamptz not null
+```
+
+Required enum:
+
+```text
+tp_dataset_status: draft, active, archived, failed
+```
+
+Only one dataset should be active at a time. Enforce this at the database level
+with a partial unique index where `status = 'active'`. Dataset activation must
+be transactional.
+
+### `tarot_pairs.tarot_pairs`
+
+```text
+id                         uuid primary key
+dataset_id                 uuid not null references tarot_pairs.tarot_pair_datasets(id)
+card_low_id                smallint not null references tarot_pairs.tarot_cards(id)
+card_high_id               smallint not null references tarot_pairs.tarot_cards(id)
+meaning                    text not null
+keywords                   text[] not null default '{}'
+theme                      text nullable
+special_interpretation     text nullable
+is_curated                 boolean not null default false
+curated_title              text nullable
+access_tier                tarot_pairs.tp_content_access_tier not null default 'free'
+content_hash               text nullable
+created_at                 timestamptz not null
+updated_at                 timestamptz not null
 ```
 
 Required constraints:
 
 ```text
 card_low_id < card_high_id
-unique(card_low_id, card_high_id)
+unique(dataset_id, card_low_id, card_high_id)
 ```
 
-Suggested enums:
+Required enum:
 
 ```text
-content_access_tier: free, premium
-publication_status: draft, published, archived
+tp_content_access_tier: free, premium
 ```
 
-All application and import code must canonicalize pair order before lookup or
+All application and import code must canonicalize card order before lookup or
 mutation.
 
-### `pair_meanings`
+### `tarot_pairs.spread_templates`
 
 ```text
-pair_id                    uuid primary key references tarot_pairs(id)
-meaning                    text not null
-keywords                   text[] not null default '{}'
-theme                      text nullable
-special_interpretation     text nullable
-version                    integer not null
-content_hash               text not null
-updated_by                 uuid nullable references auth.users(id)
-published_at               timestamptz nullable
-created_at                 timestamptz not null
-updated_at                 timestamptz not null
+id             uuid primary key
+name           text not null
+description    text nullable
+is_system      boolean not null default false
+created_by     uuid nullable references tarot_pairs.profiles(id)
+created_at     timestamptz not null
+updated_at     timestamptz not null
 ```
 
-This table contains only authoritative editorial content. AI-generated text
-must never overwrite it.
+Private beta should seed at least:
 
-### `pair_meaning_history`
+- Daily Pair
+- Past / Present / Future
+
+### `tarot_pairs.spread_template_positions`
 
 ```text
-id                         uuid primary key
-pair_id                    uuid not null references tarot_pairs(id)
-version                    integer not null
-meaning                    text not null
-keywords                   text[] not null
-theme                      text nullable
-special_interpretation     text nullable
-access_tier                content_access_tier not null
-changed_by                 uuid nullable references auth.users(id)
-change_source              text not null
-import_id                  uuid nullable
-created_at                 timestamptz not null
+id              uuid primary key
+template_id     uuid not null references tarot_pairs.spread_templates(id)
+position_index  integer not null
+label           text not null
+description     text nullable
+created_at      timestamptz not null
+
+unique(template_id, position_index)
 ```
 
-History should be created by a database trigger so application code cannot
-bypass it. Production history is append-only.
+Each template position represents one tarot pair.
 
-### `profiles`
+### `tarot_pairs.readings`
 
 ```text
-id                 uuid primary key references auth.users(id)
-display_name       text nullable
-app_role           app_role not null default 'user'
-account_status     account_status not null default 'active'
-created_at         timestamptz not null
-updated_at         timestamptz not null
+id                    uuid primary key
+user_id               uuid not null references tarot_pairs.profiles(id)
+spread_template_id    uuid nullable references tarot_pairs.spread_templates(id)
+title                 text nullable
+question              text nullable
+reading_type          tarot_pairs.tp_reading_type not null default 'manual'
+status                tarot_pairs.tp_reading_status not null default 'completed'
+created_at            timestamptz not null
+updated_at            timestamptz not null
+archived_at           timestamptz nullable
 ```
 
-Suggested roles:
+Required enums:
 
 ```text
-user, content_editor, admin
+tp_reading_type: manual, daily_draw
+tp_reading_status: draft, completed, archived
 ```
 
-Suggested account states:
+### `tarot_pairs.reading_positions`
 
 ```text
-active, suspended, deleted
+id                                  uuid primary key
+reading_id                          uuid not null references tarot_pairs.readings(id)
+position_index                      integer not null
+label                               text not null
+question                            text nullable
+tarot_pair_id                       uuid not null references tarot_pairs.tarot_pairs(id)
+dataset_id                          uuid not null references tarot_pairs.tarot_pair_datasets(id)
+card_low_id                         smallint not null references tarot_pairs.tarot_cards(id)
+card_high_id                        smallint not null references tarot_pairs.tarot_cards(id)
+meaning_snapshot                    text not null
+special_interpretation_snapshot     text nullable
+keywords_snapshot                   text[] not null default '{}'
+theme_snapshot                      text nullable
+created_at                          timestamptz not null
+
+unique(reading_id, position_index)
 ```
 
-### `subscriptions`
+`tarot_pair_id` references the exact pair record used at the time of the
+reading. `dataset_id`, `card_low_id`, and `card_high_id` are retained for easier
+querying and history. `meaning_snapshot` and
+`special_interpretation_snapshot` preserve the interpretation shown to the user
+even if a new dataset is activated later. `question` is nullable and reserved
+for future position-specific context.
+
+### `tarot_pairs.reading_notes`
 
 ```text
-id                         uuid primary key
-user_id                    uuid not null references profiles(id)
-provider                   text not null
-provider_customer_id       text nullable
-provider_subscription_id   text nullable
-status                     subscription_status not null
-current_period_end         timestamptz nullable
-cancel_at_period_end       boolean not null default false
-created_at                 timestamptz not null
-updated_at                 timestamptz not null
+id                    uuid primary key
+user_id               uuid not null references tarot_pairs.profiles(id)
+reading_id            uuid not null references tarot_pairs.readings(id)
+reading_position_id   uuid nullable references tarot_pairs.reading_positions(id)
+body                  text not null
+created_at            timestamptz not null
+updated_at            timestamptz not null
 ```
 
-Only trusted backend code or billing webhooks may mutate subscription state.
+Notes may be attached to a whole reading or one reading position.
 
-### `favorites`
+### `tarot_pairs.reading_tags`
 
 ```text
 id           uuid primary key
-user_id      uuid not null references profiles(id)
-pair_id      uuid not null references tarot_pairs(id)
+user_id      uuid not null references tarot_pairs.profiles(id)
+name         text not null
+color        text nullable
 created_at   timestamptz not null
-
-unique(user_id, pair_id)
+updated_at   timestamptz not null
 ```
 
-### `daily_draws`
+Add a case-insensitive uniqueness constraint per user and tag name.
+
+### `tarot_pairs.reading_tag_assignments`
 
 ```text
-id                  uuid primary key
-user_id             uuid not null references profiles(id)
-draw_date           date not null
-pair_id             uuid not null references tarot_pairs(id)
-card_low_id         smallint not null references tarot_cards(id)
-card_high_id        smallint not null references tarot_cards(id)
-meaning_version     integer nullable
-meaning_snapshot    text nullable
-created_at          timestamptz not null
+reading_id   uuid not null references tarot_pairs.readings(id)
+tag_id       uuid not null references tarot_pairs.reading_tags(id)
+created_at   timestamptz not null
+
+primary key(reading_id, tag_id)
+```
+
+### `tarot_pairs.favorites`
+
+Favorites should support both pair and reading favorites. Use nullable foreign
+keys plus a type check, or split into two tables later if needed.
+
+```text
+id                uuid primary key
+user_id           uuid not null references tarot_pairs.profiles(id)
+favorite_type     tarot_pairs.tp_favorite_type not null
+tarot_pair_id     uuid nullable references tarot_pairs.tarot_pairs(id)
+reading_id        uuid nullable references tarot_pairs.readings(id)
+created_at        timestamptz not null
+```
+
+Required enum:
+
+```text
+tp_favorite_type: pair, reading
+```
+
+Constraints should ensure exactly one target is populated and prevent duplicate
+favorites per user/target.
+
+Required favorite target constraint:
+
+```text
+favorite_type = 'pair'
+  requires tarot_pair_id is not null
+  and reading_id is null
+
+favorite_type = 'reading'
+  requires reading_id is not null
+  and tarot_pair_id is null
+```
+
+### `tarot_pairs.daily_draws`
+
+Daily draw should reference a reading, so later beta features can reuse reading
+history, notes, tags, and AI expansion logic.
+
+```text
+id           uuid primary key
+user_id      uuid not null references tarot_pairs.profiles(id)
+draw_date    date not null
+reading_id   uuid not null references tarot_pairs.readings(id)
+created_at   timestamptz not null
 
 unique(user_id, draw_date)
 ```
 
-The product must define whether `draw_date` is based on UTC or a stored user
-timezone before this table is finalized.
+The product must define whether `draw_date` is based on UTC or the user's
+profile timezone.
 
-### `content_imports`
+### `tarot_pairs.content_imports`
 
 ```text
 id                  uuid primary key
+dataset_id          uuid nullable references tarot_pairs.tarot_pair_datasets(id)
 filename            text not null
-status              import_status not null
+status              tarot_pairs.tp_import_status not null
 row_count           integer not null default 0
 accepted_count      integer not null default 0
 rejected_count      integer not null default 0
 validation_errors   jsonb not null default '[]'
-created_by          uuid not null references profiles(id)
+created_by          uuid not null references tarot_pairs.profiles(id)
 created_at          timestamptz not null
 completed_at        timestamptz nullable
 ```
 
-CSV imports must validate the complete input before changing published content.
-An import should execute transactionally through a protected database function
-or Supabase Edge Function.
+Required enum:
+
+```text
+tp_import_status: uploaded, validating, validated, failed, activated
+```
+
+CSV imports must validate the complete file before changing active content.
+
+### `tarot_pairs.ai_expansion_requests`
+
+Future premium/credit-based feature stub. Do not implement OpenAI in Phase 1.
+
+```text
+id                          uuid primary key
+user_id                     uuid not null references tarot_pairs.profiles(id)
+reading_id                  uuid nullable references tarot_pairs.readings(id)
+reading_position_id         uuid nullable references tarot_pairs.reading_positions(id)
+tarot_pair_id               uuid not null references tarot_pairs.tarot_pairs(id)
+question                    text nullable
+grounding_meaning_snapshot  text not null
+status                      tarot_pairs.tp_ai_request_status not null default 'queued'
+credits_charged             integer not null default 0
+created_at                  timestamptz not null
+completed_at                timestamptz nullable
+```
+
+### `tarot_pairs.ai_expansions`
+
+```text
+id             uuid primary key
+request_id     uuid not null references tarot_pairs.ai_expansion_requests(id)
+provider       text not null
+model          text not null
+response       text not null
+created_at     timestamptz not null
+```
+
+AI output must remain distinct from authoritative editorial pair meanings unless
+an editor deliberately reviews and imports it into a later dataset.
+
+## Row Level Security
+
+RLS must be enabled for every application table exposed through Supabase.
+
+### General Rules
+
+- React route guards improve UX but are not security boundaries.
+- The public Supabase anonymous key is expected to be visible.
+- Security relies on RLS, grants, database functions, and server-side service
+  credentials.
+- Service-role keys and third-party API keys must never enter frontend code.
+
+### Profiles
+
+- Users may select their own profile.
+- Users may update safe personal fields such as `display_name` and `timezone`.
+- Users may not update `role` or `account_status`.
+- Admins may read and manage profiles.
+
+### Subscription Status
+
+- Users may select their own subscription status.
+- Users may not insert, update, or delete subscription rows.
+- Admins or service-role backend code may update subscription stubs.
+- Future Stripe webhooks must use trusted server-side credentials.
+
+### Tarot Cards
+
+- Authenticated and anonymous users may select cards.
+- Only admins may insert, update, or delete cards.
+
+### Tarot Pair Datasets
+
+- Admins may select all datasets.
+- Normal users should only interact with active dataset content through approved
+  read functions or views.
+- Only admins may create draft datasets, import rows, activate a dataset, or
+  archive a dataset.
+
+### Tarot Pairs
+
+- Avoid broad direct `select` access to all pair meaning rows.
+- Users should read active pair content through functions or views that enforce
+  access tier and entitlement.
+- Free users may receive free meanings and locked premium metadata.
+- Premium users may receive premium meanings when entitlement is valid.
+- Admins may select and manage all pair rows.
+- Only admins may insert, update, or delete pair rows.
+
+Initial read functions should include:
+
+```text
+tarot_pairs.tp_get_active_pair_by_cards(card_a_id, card_b_id)
+tarot_pairs.tp_get_random_active_pair()
+tarot_pairs.tp_list_curated_pairs(limit, offset)
+```
+
+Administrative functions should include:
+
+```text
+tarot_pairs.tp_validate_pair_csv_import(import_id)
+tarot_pairs.tp_activate_pair_dataset(dataset_id)
+```
+
+Dataset activation must be admin-only and transactional. Activation should fail
+unless the target dataset contains exactly 3,003 canonical pair rows.
+
+### Spread Templates
+
+- Everyone may select system templates.
+- Users may create, select, update, and delete their own custom templates if
+  custom templates are enabled for beta.
+- Admins may manage system templates.
+
+If custom templates are not part of private beta, only seed system templates and
+disable user writes.
+
+### Readings And Reading Positions
+
+- Users may select, insert, update, and archive their own readings.
+- Users may select, insert, update, and delete positions only for their own
+  readings.
+- Users may not attach positions to another user's reading.
+- Admin support access is an open product decision.
+
+### Reading Notes
+
+- Users may CRUD notes only on their own readings or reading positions.
+- Admin support access is an open product decision.
+
+### Reading Tags And Assignments
+
+- Users may CRUD their own tags.
+- Users may assign only their own tags to their own readings.
+
+### Favorites
+
+- Users may select, insert, and delete only their own favorites.
+- Users may not favorite another user's reading unless sharing is later added.
+- Duplicate favorites must be prevented by constraints.
+
+### Daily Draws
+
+- Users may select and insert only their own daily draw rows.
+- Users may not update draw date or user ownership.
+- One draw per user per day is enforced by a uniqueness constraint.
+- Deletion should be restricted or treated as archive depending on product
+  policy.
+
+### Content Imports
+
+- Admin-only select, insert, update, and activation.
+- Import validation errors may be visible to admins.
+- Non-admin users have no direct access.
+
+### AI Expansion Stubs
+
+- Users may select their own requests and expansions.
+- Future request creation must occur through a backend function that checks
+  premium entitlement or credits.
+- Users may not insert generated responses directly.
+- No frontend OpenAI calls are allowed.
 
 ## Authentication And Authorization
 
-### Authentication
-
-Supabase Auth will own:
+Supabase Auth owns:
 
 - Registration
 - Login
@@ -306,100 +795,51 @@ Supabase Auth will own:
 - Email verification
 - Password reset
 
-A database trigger should create a `profiles` record when an Auth user is
-created.
-
-### Roles And Entitlements
-
-Operational authorization and commercial entitlement are separate concepts:
-
-- `app_role` grants administrative capabilities.
-- Subscription state grants premium content access.
-
-The frontend may use role and entitlement information to render appropriate UI,
-but it is not a security boundary.
-
-Recommended database helper functions:
+Tarot Pairs should not require a global trigger on `auth.users` for private
+beta, because this Supabase project is shared with SIT. Instead, the app may
+call a Tarot-specific profile bootstrap RPC when an authenticated user first
+enters the app:
 
 ```text
-is_admin()
-can_manage_content()
-has_premium_access()
+tarot_pairs.tp_ensure_profile(display_name, timezone)
 ```
 
-Frequently changing subscription state should be checked in the database
-rather than relying exclusively on potentially stale JWT claims.
+That RPC creates or refreshes:
 
-## Row Level Security
+- `tarot_pairs.profiles` row
+- `tarot_pairs.subscription_status` row
 
-RLS must be enabled for every application table exposed through Supabase.
+This is the intended profile/subscription bootstrap path. The frontend should
+call it after signup/login before loading user-owned Tarot Pairs data. The
+migration intentionally does not add, replace, or depend on any `auth.users`
+trigger, because auth is shared with SIT.
 
-### Tarot Cards
+Private beta can later add invite-only registration, but the schema should not
+depend on public launch behavior.
 
-- Anonymous and authenticated users may read.
-- Only admins may insert, update, or delete.
-
-### Tarot Pairs And Meanings
-
-- Users may discover published pair metadata.
-- Full meaning text is returned only when access rules allow it.
-- Content editors and admins may read drafts.
-- Only content editors and admins may create or update content.
-- Normal application operations should archive rather than hard-delete content.
-
-The frontend must not download all premium meanings and hide them with React.
-Direct browser access to the core meaning table should be revoked. Meanings
-should be exposed through narrow RPCs, views, or Edge Functions that enforce
-publication and entitlement rules.
-
-Initial read operations should include:
+Recommended helper functions:
 
 ```text
-get_pair_by_cards(card_a_id, card_b_id)
-list_curated_pairs(limit, offset)
-get_random_accessible_pair()
+tarot_pairs.tp_is_admin()
+tarot_pairs.tp_has_active_subscription()
+tarot_pairs.tp_has_ai_credits()
+tarot_pairs.tp_can_access_pair(tarot_pair_id)
 ```
 
-Administrative lists must use authenticated, authorized pagination rather than
-loading the complete corpus into browser state.
+Do not rely only on frontend role checks or editable profile state.
 
-### Profiles
-
-- Users may read their own profile.
-- Users may update only approved personal fields.
-- Users cannot change their role or account status.
-- Admin user management must use protected operations.
-
-### Subscriptions
-
-- Users may read their own entitlement state.
-- Users cannot create or update subscriptions.
-- Only service-role backend code and billing webhooks may mutate them.
-
-### Favorites
-
-Authenticated users may select, insert, and delete only rows where:
-
-```sql
-user_id = auth.uid()
-```
-
-### Daily Draws
-
-Authenticated users may access only their own rows. Insert policies must force
-`user_id = auth.uid()`. The database uniqueness constraint enforces one draw
-per user per day.
-
-### History And Imports
-
-- Meaning history is written by trusted triggers or functions.
-- Content editors and admins may read relevant history.
-- Import execution is restricted to content editors and admins.
-- Ordinary clients receive no direct write access.
+The helper functions used by RLS policies, including `tarot_pairs.tp_is_admin()`,
+are `SECURITY DEFINER` functions with a constrained `search_path`. In Supabase,
+when these functions are owned by the migration/table owner and table-level
+`FORCE ROW LEVEL SECURITY` is not enabled, their internal reads are evaluated as
+the function owner rather than the calling browser user. That avoids recursive
+policy evaluation when `tp_is_admin()` is called from policies on
+`tarot_pairs.profiles`. If `FORCE ROW LEVEL SECURITY` is introduced later, this
+assumption must be re-tested.
 
 ## Application Data Layer
 
-React pages and presentation components must not call Supabase directly.
+React pages and presentation components should not call Supabase directly.
 
 Proposed structure:
 
@@ -413,61 +853,73 @@ src/
     authRepository.js
     profileRepository.js
     pairRepository.js
+    readingRepository.js
     favoriteRepository.js
     dailyDrawRepository.js
+    adminContentRepository.js
     subscriptionRepository.js
-    contentAdminRepository.js
 
   services/
     authService.js
     pairService.js
+    readingService.js
     dailyDrawService.js
     csvImportService.js
     legacyMigrationService.js
-
-  context/
-    AuthContext.jsx
-    RoleContext.jsx
-    PairDataContext.jsx
-    UserContext.jsx
 ```
 
 ### Repositories
 
 Repositories perform narrow Supabase operations and normalize returned rows.
-They do not contain component state.
+They do not own React state.
 
-An initial `pairRepository` contract should include:
+Because Tarot Pairs uses a non-public schema in a shared Supabase project,
+repositories must explicitly select the schema:
 
-```text
-getPairByCards(cardAId, cardBId)
-listCuratedPairs(options)
-getRandomPair()
-listAdminPairs(options)
-createPair(input)
-updatePair(pairId, input)
-archivePair(pairId)
+```js
+supabase.schema('tarot_pairs').from('readings')
+supabase.schema('tarot_pairs').rpc('tp_get_active_pair_by_cards', {
+  card_a_id,
+  card_b_id,
+})
 ```
+
+Do not configure shared client behavior that would accidentally affect SIT
+queries.
+
+Initial repository responsibilities:
+
+- `authRepository`: sign in, sign up, sign out, session subscription
+- `profileRepository`: current profile and role/entitlement lookup
+- `pairRepository`: active pair lookup, random pair, curated pair list
+- `readingRepository`: reading CRUD, positions, notes, tags
+- `favoriteRepository`: pair and reading favorites
+- `dailyDrawRepository`: get/create daily draw
+- `adminContentRepository`: import validation, dataset management
+- `subscriptionRepository`: payment stub and entitlement reads
 
 ### Services
 
-Services coordinate application rules:
+Services apply application rules:
 
 - Canonicalize card order.
-- Convert database records into stable UI models.
-- Coordinate multi-step workflows.
-- Map backend failures to user-safe errors.
-- Implement daily draw behavior.
-- Orchestrate one-time legacy data migration.
+- Create reading positions from selected card pairs.
+- Snapshot pair meanings into readings.
+- Enforce daily draw flow.
+- Map database rows to UI models.
+- Map backend errors to user-safe messages.
+- Coordinate one-time legacy localStorage migration.
 
 ### Contexts
 
-Contexts remain UI-facing adapters during migration. They should own loading,
-error, and cached UI state while delegating persistence and business rules to
-services.
+Current contexts should become thin UI-facing adapters:
 
-The existing context APIs may be preserved temporarily to reduce component
-churn, but their localStorage and mock implementations will be replaced.
+- `AuthContext` delegates to `authService`.
+- `RoleContext` delegates to profile/entitlement reads.
+- `PairDataContext` delegates to `pairService`.
+- `UserContext` delegates to favorites, readings, daily draws, notes, and tags.
+
+Keep existing component-facing APIs temporarily where useful to reduce UI churn.
 
 ## Future AI Boundary
 
@@ -475,128 +927,107 @@ AI integration is outside Phase 1, but its trust boundary is defined now:
 
 ```text
 React frontend
-  -> authenticated Supabase Edge Function
-  -> load authoritative pair meaning and version
-  -> construct a grounded prompt
-  -> call OpenAI with a server-held credential
-  -> return or store the expanded interpretation
+  -> authenticated backend route or Supabase Edge Function
+  -> verify premium/credits
+  -> load authoritative stored pair meaning
+  -> include user question if provided
+  -> construct grounded prompt
+  -> call OpenAI with server-held credential
+  -> store request/response
+  -> return response to user
 ```
 
-Future AI records should retain:
-
-- User ID where applicable
-- Pair ID
-- Authoritative meaning version
-- Authoritative content hash
-- Model and provider
-- User-supplied context
-- Generated result
-- Status and safety metadata
-- Creation and retention timestamps
-
-AI output must be visibly labeled and must remain distinct from authoritative
-editorial content unless an editor deliberately reviews and publishes it.
+AI output must be labeled as generated and remain distinct from authoritative
+stored interpretations.
 
 ## Migration Sequence
 
-### 1. Establish Supabase Project Structure
+### 1. Supabase Foundation
 
-- Add Supabase local configuration.
-- Add migration and seed directories.
-- Define development, staging, and production environment variables.
-- Establish generated database type conventions.
+- Add Supabase environment conventions.
+- Add local Supabase project structure.
+- Add migrations directory.
+- Add helper functions and baseline RLS.
 
-### 2. Create Core Content Schema
+### 2. Auth And Profiles
 
-- Create enums and core tables.
-- Add canonical pair constraints and indexes.
-- Add history and timestamp triggers.
-- Add initial grants and RLS policies.
+- Replace mock auth with Supabase Auth.
+- Add profile trigger.
+- Add default subscription stub row.
+- Remove email-address-based admin assignment.
 
-### 3. Import And Validate Core IP
+### 3. Cards And Pair Dataset Reads
 
-- Obtain the authoritative 3,003-row source.
-- Preserve an immutable backup outside runtime application assets.
-- Normalize all pair order.
-- Verify exactly 3,003 unique combinations.
-- Reject missing cards, duplicate pairs, invalid fields, and empty meanings.
-- Generate content hashes and an import report.
-- Validate in staging before production.
+- Seed the 78 cards.
+- Add dataset and pair tables.
+- Import sample CSV into a draft dataset for development.
+- Later import the authoritative 3,003-pair CSV.
+- Add active-dataset pair read functions.
 
-The sample CSV in this repository is not the canonical corpus.
+### 4. Daily Draws
 
-### 4. Implement Secure Pair Read Operations
+- Model daily draw as a one-position reading.
+- Enforce one draw per user per day.
+- Decide timezone behavior before production beta.
 
-- Add pair lookup, curated list, and random pair operations.
-- Enforce publication and premium access server-side.
-- Return an explicit unavailable or locked state instead of random meanings.
-- Test anonymous, free, premium, editor, and admin behavior.
+### 5. Readings And Reading Positions
 
-### 5. Add Authentication And Profiles
+- Add system spread templates.
+- Create manual readings with one or more pair positions.
+- Snapshot pair interpretation into each position.
 
-- Replace mock authentication with Supabase Auth.
-- Create profiles automatically.
-- Add role and entitlement helpers.
-- Remove email-address-based privilege assignment.
+### 6. Favorites
 
-### 6. Migrate Pair Reads
+- Migrate from embedded localStorage favorites to database references.
+- Support pair favorites and reading favorites.
+- Fix identity mismatch.
 
-Refactor pair consumers in this order:
+### 7. Notes And Tags
 
-1. Explore pairs
-2. Pair result access state
-3. Curated pairs
-4. Daily draw pair lookup
-5. Home statistics
+- Add reading notes.
+- Add user-owned tags and assignments.
 
-### 7. Migrate Content Administration
+### 8. Admin CSV Import
 
-- Replace browser-wide array updates with row-level operations.
-- Add version history and rollback.
-- Implement transactional CSV validation and import.
-- Keep exports restricted to authorized staff.
+- Validate CSV into a draft dataset.
+- Require exactly 3,003 canonical unique pairs for full corpus activation.
+- Activate replacement datasets transactionally.
+- Keep import audit trail.
 
-### 8. Migrate Favorites
+### 9. Premium/Payment Stubs
 
-- Store user and pair references.
-- Enforce ownership and uniqueness.
-- Correct the existing favorite identity mismatch.
+- Replace client-controlled premium with backend entitlement reads.
+- Stub fields for provider/customer/subscription IDs.
+- Do not implement Stripe yet.
 
-### 9. Migrate Daily Draws
+### 10. Future AI Expansion Stubs
 
-- Persist one draw per user per day.
-- Apply the chosen timezone rule.
-- Preserve meaning history according to the snapshot decision.
+- Add AI request/response tables.
+- Define backend-only execution boundary.
+- Do not implement OpenAI calls yet.
 
-### 10. Add Subscription Foundation
-
-- Add subscription records and entitlement helpers.
-- Remove client-controlled premium upgrades.
-- Defer billing-provider integration to a later phase.
-
-### 11. Migrate Legacy Browser Data
+### 11. Legacy Browser Migration
 
 For authenticated users only:
 
 - Detect legacy favorites and daily draw keys.
-- Validate and map stored pairs to canonical database IDs.
+- Validate stored pair/card data.
+- Map to active dataset pair IDs where possible.
 - Import valid records once.
 - Record migration completion.
-- Remove old keys only after confirmed success.
-
-Do not import `tarotUser`, browser-assigned roles, or browser-assigned premium
-status.
+- Never import localStorage-granted roles or premium status.
 
 ## File Strategy
 
 ### Preserve As Presentation
 
-These files should require little or no architectural change:
+These files should remain mostly presentation-focused:
 
 - `src/components/Layout.jsx`
 - `src/components/Header.jsx`
 - `src/components/Navigation.jsx`
 - `src/components/TarotCard.jsx`
+- `src/components/CardSelector.jsx`
 - `src/common/SafeIcon.jsx`
 - `src/App.css`
 - `src/index.css`
@@ -604,8 +1035,7 @@ These files should require little or no architectural change:
 
 ### Preserve And Refactor
 
-These files retain their presentation responsibilities but will consume new
-context or service contracts:
+These files retain useful UI but should consume new context/service contracts:
 
 - `src/App.jsx`
 - `src/pages/Home.jsx`
@@ -617,6 +1047,9 @@ context or service contracts:
 - `src/pages/Login.jsx`
 - `src/pages/Register.jsx`
 - `src/pages/Upgrade.jsx`
+- `src/pages/Admin.jsx`
+- `src/pages/AdminDashboard.jsx`
+- `src/pages/UserManagement.jsx`
 - `src/components/PairResult.jsx`
 - `src/components/ProtectedRoute.jsx`
 - `src/components/RoleGuard.jsx`
@@ -624,129 +1057,136 @@ context or service contracts:
 
 ### Replace Internals
 
-The public APIs may be preserved temporarily, but the implementations will be
-replaced:
+The public APIs may be preserved temporarily, but implementations should be
+rewritten around services and Supabase:
 
 - `src/context/AuthContext.jsx`
 - `src/context/RoleContext.jsx`
 - `src/context/UserContext.jsx`
 - `src/context/PairDataContext.jsx`
 
-### Retire As Runtime Sources
+### Retire As Runtime Authority
 
-- Sample and curated pair records in `src/data/pairMeanings.js`
-- Random generated meanings in `src/data/pairMeanings.js` and
-  `src/context/PairDataContext.jsx`
+- `src/data/pairMeanings.js`
+- Random generated meanings in `src/context/PairDataContext.jsx`
+- localStorage persistence for auth, pairs, favorites, and daily draws
 - Mock users in `src/pages/UserManagement.jsx`
-- Mock metrics in `src/pages/AdminDashboard.jsx`
-- Client-controlled premium upgrades in `src/context/AuthContext.jsx`
+- Mock dashboard metrics in `src/pages/AdminDashboard.jsx`
+- Client-controlled premium upgrade in `src/context/AuthContext.jsx`
 
-`src/data/tarotCards.js` may remain as a static UI catalog, but Supabase becomes
-canonical. If both copies remain, an automated consistency test is required.
+`src/data/tarotCards.js` may remain as a UI convenience, but Supabase becomes
+canonical. If both copies remain, add a consistency check.
 
 ## Security Requirements
 
-- The Supabase anonymous key may be present in frontend configuration; it is not
-  a secret.
-- The service-role key and all third-party provider secrets must remain
-  server-side.
-- RLS and database grants must deny access by default.
-- Admin and content controls in React are convenience UI, not authorization.
-- Premium meanings must not be bulk-delivered to unauthorized clients.
-- Content changes require attribution and history.
-- CSV imports must be validated and transactional.
-- Production data must have independent backups and restore procedures.
+- RLS enabled on all application tables.
+- Database grants deny unsafe direct access by default. Normal authenticated
+  users get direct write grants only for profile bootstrap and their own
+  user-owned records. Admin/content tables such as `tarot_cards`,
+  `tarot_pair_datasets`, `tarot_pairs`, `content_imports`, subscription writes,
+  and generated AI responses should be written through service-role code or
+  narrow Tarot-specific RPCs.
+- Admin/content actions require backend authorization.
+- Premium pair meanings are not bulk-delivered to unauthorized users.
+- Dataset activation is admin-only and transactional.
+- Service-role key, Stripe secrets, and OpenAI keys remain server-side.
+- CSV imports are validated before activation.
+- Reading ownership is enforced in RLS.
+- Future AI requests verify premium/credits server-side.
 
 ## Required Tests
 
 Phase 1 implementation should include database-level or integration tests for:
 
-- Exactly 3,003 canonical pair combinations
-- Reversed-pair duplicate rejection
-- Invalid card and same-card rejection
-- Meaning history creation and rollback
-- Anonymous, free, premium, editor, and admin pair access
-- Prevention of role escalation
-- Prevention of subscription mutation by clients
-- Favorite ownership and uniqueness
-- Daily draw ownership and one-per-day uniqueness
-- CSV validation and transaction rollback
-- Prevention of direct premium corpus access
+- Profile creation on signup.
+- Prevention of user role escalation.
+- Prevention of client subscription mutation.
+- Exactly 78 canonical cards.
+- Exactly 3,003 canonical pairs for a full dataset.
+- Reversed-pair duplicate rejection.
+- Same-card pair rejection.
+- Active dataset replacement behavior.
+- Pair access for anonymous/free/premium/admin users.
+- Daily draw one-per-user-per-day behavior.
+- Reading ownership and position ownership.
+- Reading note ownership.
+- Tag ownership and assignment ownership.
+- Favorite ownership and uniqueness.
+- CSV validation and failed import rollback.
+- Prevention of direct premium corpus access.
 
 ## Risks And Open Decisions
 
-### Authoritative Corpus
+### Technical Risks
 
-The complete 3,003-row source is not present in this repository. Its location,
-ownership, format, completeness, encoding, and backup process must be confirmed
-before content migration.
+- Direct Supabase reads can leak premium/IP content if grants are too broad.
+- Dataset replacement can break history unless positions snapshot meanings.
+- Daily draw timezone rules can create duplicate or missing draws.
+- Pair identity must be canonicalized consistently across imports, readings,
+  favorites, and daily draws.
+- Reading architecture is new and should not be bolted onto pair lookup as an
+  afterthought.
 
-### Free Access Rules
+### Data Risks
 
-The product must define:
+- The authoritative 3,003-row CSV is not in the repository.
+- CSV quality, encoding, duplicate handling, and completeness are unknown.
+- Improved future datasets need rollback and auditability.
+- Existing localStorage data may contain generated non-authoritative meanings.
 
-- Which meanings are free
-- Whether anonymous and registered-free access differ
-- Whether locked pairs reveal metadata or excerpts
-- Whether curated content is always premium
-- Whether free access changes over time
+### RLS And Security Risks
 
-### Editorial Workflow
+- Current roles and premium status are client-controlled.
+- Frontend route guards are insufficient for admin access.
+- Service-role credentials must never be placed in Vite environment variables
+  exposed to the browser.
+- Admin import must not be authorized only by client state.
 
-Decisions are required on:
+### Product Questions
 
-- Immediate publication versus review and approval
-- Content editor versus moderator responsibilities
-- Who may restore prior versions
-- Whether hard deletion is ever permitted
-- Whether imports are partial upserts or full-corpus releases
-- Whether staging approval is mandatory
+- Is private beta invite-only?
+- Which pair meanings are free versus premium?
+- Should favorites track a specific dataset pair or a card combination across
+  datasets?
+- Can users create custom spread templates during beta?
+- Are notes required at reading level, position level, or both?
+- Should daily draw remain one pair or support larger daily spreads later?
+- What should happen to old readings when a new dataset is activated?
+- What credit model will future AI use?
+- Should admins have support access to user readings, notes, and tags?
 
-### Daily Draw Semantics
+## Smallest Safe Coding Phase After This Plan
 
-Decisions are required on:
+The smallest safe implementation phase is Supabase foundation without UI wiring:
 
-- Anonymous daily draws
-- User timezone versus UTC
-- Whether a draw is immutable for the day
-- Whether historical draws store full meaning snapshots
+1. Add Supabase client/environment scaffolding.
+2. Add SQL migrations for profiles, subscription stubs, cards, datasets, pairs,
+   spread templates, readings, notes, tags, favorites, daily draws, import
+   tracking, and AI stubs.
+3. Add RLS policies and helper functions.
+4. Seed the 78 tarot cards.
+5. Seed basic system spread templates.
+6. Add CSV import validation for the current sample CSV.
+7. Do not connect current UI components yet.
 
-### Billing
-
-The billing provider, trial rules, grace periods, cancellation behavior, and
-administrative entitlement overrides remain outside Phase 1.
-
-### Data Delivery
-
-The user experience should not require downloading all 3,003 complete meanings.
-Pair lookup should be server-filtered, and administrative screens should use
-pagination and search.
-
-### AI Governance
-
-Before AI implementation, define:
-
-- Allowed user context
-- Grounding and prompt format
-- Storage and retention policy
-- Rate limits and premium quotas
-- Safety and privacy handling
-- Labeling of authoritative and generated text
-- Editorial review requirements for any generated content
+This creates a secure database foundation that can be tested before the saved
+React/Vite presentation layer is wired to it.
 
 ## Phase 1 Completion Criteria
 
 Phase 1 is complete when:
 
 - Supabase schema and migrations are version controlled.
-- The canonical deck and verified pair corpus are imported.
-- Pair meanings are versioned and protected by grants and RLS.
-- Secure pair read contracts exist for each access level.
-- Supabase Auth and profiles replace mock authentication.
-- Operational roles and premium entitlement are separate.
-- Frontend data access goes through repositories and services.
-- Pair reads no longer depend on localStorage or random fallback meanings.
-- Database and authorization tests pass.
+- Supabase Auth and profiles replace mock authentication in architecture.
+- Operational role and premium/payment entitlement are separate.
+- Tarot cards are seeded.
+- Pair datasets support replacement of the interpretation corpus.
+- Pair meanings are protected by grants, RLS, and narrow read functions.
+- Readings and reading positions model pair-based spreads.
+- Daily draw, favorites, notes, and tags have secure table designs.
+- Admin CSV import has a draft/validate/activate path.
+- Payment and AI boundaries are stubbed but not implemented.
+- Required database/security tests are identified and ready to implement.
 
-Billing, OpenAI integration, and new product functionality are explicitly not
+Billing, OpenAI integration, mobile apps, and new UI features are explicitly not
 required for Phase 1 completion.
